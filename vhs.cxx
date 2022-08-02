@@ -38,6 +38,66 @@ struct vhs
 
     void process(const uint32_t *inframe, uint32_t *outframe)
     {
+        unsigned int roll_end = std::min(m_roll_position + m_roll_size, m_height);
+
+        for (unsigned int j = 0; j < m_height; ++j)
+        {
+            unsigned int shift = m_right_shift(m_prng);
+            const size_t row = size_t(j) * m_width;
+
+            size_t in_row_end = row + m_width - shift;
+            for (size_t i = row; i < in_row_end; ++i)
+            {
+                const uint8_t *PIn_0 = reinterpret_cast<const uint8_t*>(inframe + i); // Y
+                const uint8_t *PIn_1 = reinterpret_cast<const uint8_t*>(inframe + std::max<size_t>(i, m_chroma_shift) - m_chroma_shift); // U
+                const uint8_t *PIn_2 = reinterpret_cast<const uint8_t*>(inframe + std::min(i + m_chroma_shift, in_row_end)); // V
+                uint8_t *POut = reinterpret_cast<uint8_t*>(outframe + i + shift);
+
+                // RGB to YUV, with half contrast reduction
+                float Y =  .1495   * PIn_0[0] + .2935    * PIn_0[1] + .057     * PIn_0[2] + 64;
+                float U = -.084368 * PIn_1[0] + .165632  * PIn_1[1] + .25      * PIn_1[2];
+                float V =  .25     * PIn_2[0] - 0.209344 * PIn_2[1] - 0.040656 * PIn_2[2];
+                
+                // TODO add noise to pixels
+                POut[0] = Y                + 1.402    * V;
+                POut[1] = Y - 0.344136 * U - 0.714136 * V;
+                POut[2] = Y + 1.772    * U;
+                POut[3] = PIn_0[3];
+            }
+
+            std::fill(outframe + row, outframe + row + shift, 0);
+        }
+
+        for (unsigned int j = m_roll_position; j < roll_end; ++j)
+        {
+            for (unsigned int i = 0; i < m_width; ++i)
+            {
+                const size_t pIn = size_t(j) * m_width + i;
+                const size_t pOut = size_t(m_roll_position) * m_width + i;
+
+                outframe[pIn] = outframe[pOut];
+            }
+        }
+
+        // TODO make strokes realistic and probabilize
+        for (unsigned int j = 0; j < m_scratch_count; ++j)
+        {
+            unsigned int scratch_length = m_scratch_length(m_prng);
+
+            size_t scratch_end = m_scratch_position(m_prng);
+            size_t scratch_begin = std::max<size_t>(scratch_length, scratch_end) - scratch_length;
+
+            for (size_t i = scratch_begin; i < scratch_end; ++i)
+            {
+                uint8_t *P = reinterpret_cast<uint8_t*>(outframe + i);
+
+                P[0] = P[1] = P[2] = 255;
+            }
+        }
+
+        // TODO lowpass with DCT
+
+        m_roll_position = (m_roll_position + m_roll_step) % m_height;
     }
 };
 
@@ -182,7 +242,7 @@ void f0r_set_param_value(
             right_shift->x * context->m_width,
             right_shift->y * context->m_width
         ));
-}
+    }
 }
 
 void f0r_update	(
